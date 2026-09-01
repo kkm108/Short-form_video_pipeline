@@ -1,0 +1,8 @@
+{
+    "_note": "Example only (enabled: false). Shells out to a CLI agent you're already authenticated with, e.g. a subscription-based coding assistant, instead of paying per-token. Adjust 'command'/'args' to whatever your specific CLI actually expects as a non-interactive, single-prompt invocation - flags vary by tool and version, so this isn't asserting one is correct.",
+    "provider": "local-cli-agent",
+    "type": "cli",
+    "command": "your-cli-tool-here",
+    "args": [],
+    "enabled": false
+}

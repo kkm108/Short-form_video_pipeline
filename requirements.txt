@@ -1,0 +1,24 @@
+# Core - needed for the orchestrator, manifest, script, assembly, human_checkpoint,
+# and both HTTP-based publishers (instagram, tiktok) to run.
+#
+# Pinned to exact versions actually installed and green under the test suite.
+# See README 'Dependency pinning' for the intentional-upgrade process - do not
+# bump one of these without re-running its test module and re-verifying the
+# library's real signature per AGENTS.md (an unverified signature assumption is
+# the recurring failure mode here).
+pyyaml==6.0.3
+requests==2.32.5
+
+# Optional - only needed for the step(s) you actually wire up. These two are
+# installed here and covered by tests (a real multi-chunk upload is exercised
+# against a mock API in tests/test_youtube_publisher.py):
+google-api-python-client==2.192.0        # executors/publishers/youtube.py
+google-auth-oauthlib==1.3.0              # YouTube's OAuth flow (run once to mint a refresh token)
+
+# Optional and intentionally UNPINNED: not installed or tested in this repo
+# right now, so there is no tested version to record yet. Uncomment these, pin
+# them to the exact version `pip freeze` reports once you install them, and run
+# the relevant module's tests green against that pin before trusting it.
+# keyring==?                                     # credentials.vault OS-keychain path (falls back to env vars without it)
+# browser-use==?                                 # executors/browser_use_adapter.py, canary/check.py
+#   playwright install chromium                 # browser-use's actual browser binary

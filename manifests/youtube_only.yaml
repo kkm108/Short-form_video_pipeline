@@ -1,0 +1,44 @@
+# Same as manifests/short_form.yaml but one platform, for a first REAL run:
+# real script, real media generation, real publish - but only YouTube's
+# credentials need to be set up, not all three platforms at once.
+# Swap "youtube" for "instagram" or "tiktok" (and the matching publish step
+# from short_form.yaml) if you'd rather start with one of those instead.
+
+run:
+  platforms: [youtube]
+
+steps:
+  - name: script
+    executor: llm
+    timeout_s: 120
+    retry: {max_attempts: 3, backoff: exponential, base_delay_s: 2, retry_on: [429, 500, 502, 503]}
+    base_url: https://api.openai.com/v1
+    api_key_env: LLM_API_KEY
+    model: gpt-4o-mini
+
+  - name: media_generation
+    executor: browser_use
+    timeout_s: 900
+    retry: {max_attempts: 2, backoff: exponential, base_delay_s: 5}
+    session_profile: ./profiles/generation_tool.json
+    task_template: "Generate 6 vertical images and a voiceover for: {topic}"
+    download_dir: ./downloads
+    headless: true
+    llm_provider: openai       # or anthropic - see executors/browser_use_adapter.py build_llm()
+    llm_model: gpt-4o-mini
+    llm_api_key_env: LLM_API_KEY
+
+  - name: assembly
+    executor: ffmpeg
+    retry: {max_attempts: 1}
+
+  - name: review_gate
+    executor: human_checkpoint
+    timeout_s: 21600
+    on_timeout: escalate
+    notify_webhook: https://hooks.slack.com/services/REPLACE/ME
+
+  - name: publish_youtube
+    executor: publish_youtube
+    retry: {max_attempts: 3, backoff: exponential, base_delay_s: 10, retry_on: [429, 500, 502, 503]}
+    hashtags: [shorts]

@@ -1,0 +1,9 @@
+# Dev / CI tooling - not part of the pipeline's runtime.
+# Install with: pip install -r requirements-dev.txt
+#
+# Pinned to the exact versions installed and green under the suite. Same
+# intentional-upgrade rule as requirements.txt (see README 'Dependency pinning').
+ruff==0.15.19
+mypy==2.3.1
+types-requests==2.33.0.20260712
+types-PyYAML==6.0.12.20260815

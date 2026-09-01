@@ -1,0 +1,42 @@
+# Same as youtube_only.yaml, but the 'script' step uses the multi-provider
+# fallback chain (executors/llm_chain.py) instead of one fixed endpoint.
+# Add/reprioritize providers by dropping numbered JSON files in providers/ -
+# see providers/000-gemini.json for the shape. Set GEMINI_API_KEY (or
+# `keyring set faceless-pipeline gemini_api_key`) before running this.
+
+run:
+  platforms: [youtube]
+
+steps:
+  - name: script
+    executor: llm_chain
+    timeout_s: 120
+    retry: {max_attempts: 2, backoff: fixed, base_delay_s: 3}
+    provider_dir: ./providers
+
+  - name: media_generation
+    executor: browser_use
+    timeout_s: 900
+    retry: {max_attempts: 2, backoff: exponential, base_delay_s: 5}
+    session_profile: ./profiles/generation_tool.json
+    task_template: "Generate 6 vertical images and a voiceover for: {topic}"
+    download_dir: ./downloads
+    headless: true
+    llm_provider: openai
+    llm_model: gpt-4o-mini
+    llm_api_key_env: LLM_API_KEY
+
+  - name: assembly
+    executor: ffmpeg
+    retry: {max_attempts: 1}
+
+  - name: review_gate
+    executor: human_checkpoint
+    timeout_s: 21600
+    on_timeout: escalate
+    notify_webhook: https://hooks.slack.com/services/REPLACE/ME
+
+  - name: publish_youtube
+    executor: publish_youtube
+    retry: {max_attempts: 3, backoff: exponential, base_delay_s: 10, retry_on: [429, 500, 502, 503]}
+    hashtags: [shorts]

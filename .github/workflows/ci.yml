@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: test ${{ matrix.module }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - test_orchestrator
+          - test_state
+          - test_llm_executor
+          - test_llm_chain
+          - test_ffmpeg_assembly
+          - test_human_checkpoint
+          - test_vault
+          - test_instagram_publisher
+          - test_tiktok_publisher
+          - test_youtube_publisher
+          - test_publish_step
+          - test_browser_use_adapter
+          - test_webhook_server
+          - test_log_redaction
+          - test_scheduled_run
+          - test_backup_restore
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ffmpeg (needed by test_ffmpeg_assembly)
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          # test_youtube_publisher exercises real OAuth credential construction,
+          # so the google client package is required for the suite, not optional.
+          pip install google-api-python-client google-auth-oauthlib
+
+      - name: Run ${{ matrix.module }}
+        # Mirrors the "whole suite" command from AGENTS.md: each module runs
+        # on its own as `python3 -m tests.<module>`, so a failure in this
+        # matrix names the exact module. No single opaque "run all tests" step.
+        run: python3 -m tests.${{ matrix.module }}
+
+  lint:
+    name: lint and type-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: ruff check
+        run: ruff check .
+
+      - name: mypy
+        run: mypy .
+
+  validate-manifests:
+    name: validate manifests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Validate every manifest
+        run: |
+          python3 - <<'EOF'
+          import glob, sys
+          from orchestrator.manifest import load_manifest
+          manifests = sorted(glob.glob("manifests/*.yaml"))
+          for p in manifests:
+              load_manifest(p)
+              print(f"OK {p}")
+          print(f"validated {len(manifests)} manifest(s)")
+          EOF

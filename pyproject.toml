@@ -1,0 +1,16 @@
+[tool.ruff]
+# Matches the codebase's existing long-line style; keeps the default rule set
+# so `ruff check .` passes without blanket-disabling anything.
+line-length = 120
+target-version = "py311"
+
+[tool.mypy]
+python_version = "3.11"
+# No global ignore_missing_imports here - optional-dependency imports are
+# suppressed narrowly with per-line `type: ignore` comments (see the import
+# sites for googleapiclient / browser_use / keyring) so nothing is silently
+# skipped. Stubs for requests/PyYAML come from the types-* packages.
+# Note: warn_unused_ignores is intentionally not enabled - whether an optional
+# dep (browser_use / keyring) is installed changes which import lines mypy
+# flags, so a "correct" per-line ignore for the default/CI (deps absent) can
+# legitimately sit unused while still being needed when that dep is present.

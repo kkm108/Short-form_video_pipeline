@@ -1,0 +1,41 @@
+# Runs the entire pipeline shape - including a REAL ffmpeg render and a REAL
+# pause at the review gate - with zero external accounts. Useful as a first
+# smoke test before wiring up any real credentials:
+#
+#   python3 cli.py start manifests/dry_run.yaml "history's shortest war"
+#   python3 cli.py status <run_id>              # watch it park at review_gate
+#   python3 cli.py approve <run_id> review_gate  # then watch it "publish"
+#
+# script/media_generation/publish_* are stubs (executors/stubs.py) - no LLM
+# key, no browser-use install, no platform credentials needed. assembly and
+# review_gate are the real executors; open the rendered file at
+# runs/<run_id>/assembled.mp4 afterwards to see an actual output.
+
+run:
+  platforms: [youtube, instagram, tiktok]
+
+steps:
+  - name: script
+    executor: llm_dryrun
+
+  - name: media_generation
+    executor: media_generation_dryrun
+
+  - name: assembly
+    executor: ffmpeg
+    retry: {max_attempts: 1}
+
+  - name: review_gate
+    executor: human_checkpoint
+    timeout_s: 21600
+    on_timeout: escalate
+    # no notify_webhook - prints nothing, just parks; check status/approve manually
+
+  - name: publish_youtube
+    executor: publish_youtube_dryrun
+
+  - name: publish_instagram
+    executor: publish_instagram_dryrun
+
+  - name: publish_tiktok
+    executor: publish_tiktok_dryrun

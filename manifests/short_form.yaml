@@ -1,0 +1,52 @@
+run:
+  platforms: [youtube, instagram, tiktok]
+
+steps:
+  - name: script
+    executor: llm
+    timeout_s: 120
+    retry: {max_attempts: 3, backoff: exponential, base_delay_s: 2, retry_on: [429, 500, 502, 503]}
+    base_url: https://api.openai.com/v1     # any OpenAI-compatible endpoint works here
+    api_key_env: LLM_API_KEY
+    model: gpt-4o-mini
+
+  - name: media_generation
+    executor: browser_use
+    timeout_s: 900
+    retry: {max_attempts: 2, backoff: exponential, base_delay_s: 5}
+    session_profile: ./profiles/generation_tool.json   # export this once with scripts/export_session.py
+    task_template: "Generate 6 vertical images and a voiceover for: {topic}"
+    download_dir: ./downloads
+    headless: true
+    llm_provider: openai       # or anthropic - see executors/browser_use_adapter.py build_llm()
+    llm_model: gpt-4o-mini
+    llm_api_key_env: LLM_API_KEY
+
+  - name: assembly
+    executor: ffmpeg
+    timeout_s: 300
+    retry: {max_attempts: 1}   # a render failure is almost always deterministic - retrying won't change the output
+
+  - name: review_gate
+    executor: human_checkpoint
+    timeout_s: 21600            # 6h - on_timeout is a signal for your poller/scheduler to escalate, never to auto-approve
+    on_timeout: escalate
+    notify_webhook: https://hooks.slack.com/services/REPLACE/ME
+
+  # Three separate publish steps, not one - see executors/publish_step.py's
+  # docstring for why: a retry on one platform must never re-publish the
+  # others that already succeeded.
+  - name: publish_youtube
+    executor: publish_youtube
+    retry: {max_attempts: 3, backoff: exponential, base_delay_s: 10, retry_on: [429, 500, 502, 503]}
+    hashtags: [shorts]
+
+  - name: publish_instagram
+    executor: publish_instagram
+    retry: {max_attempts: 3, backoff: exponential, base_delay_s: 10, retry_on: [429, 500, 502, 503]}
+    hashtags: [reels]
+
+  - name: publish_tiktok
+    executor: publish_tiktok
+    retry: {max_attempts: 3, backoff: exponential, base_delay_s: 10, retry_on: [429, 500, 502, 503]}
+    hashtags: [fyp]
