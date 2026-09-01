@@ -20,9 +20,11 @@ from credentials.vault import credentials_provider
 from executors.base import StepExecutor
 from executors.browser_use_adapter import BrowserUseAdapter
 from executors.ffmpeg_assembly import FfmpegAssemblyExecutor
+from executors.gemini_media import GeminiMediaExecutor
 from executors.human_checkpoint import HumanCheckpointExecutor
 from executors.llm import LlmScriptExecutor
 from executors.llm_chain import LlmChainExecutor
+from executors.media_chain import MediaChainExecutor
 from executors.publish_step import SinglePlatformPublishExecutor
 from executors.publishers.instagram import InstagramPublisher
 from executors.publishers.tiktok import TikTokPublisher
@@ -41,6 +43,8 @@ def build_pipeline(db_path: str = "pipeline_state.db", workdir: str = "./runs") 
         "llm": LlmScriptExecutor(),
         "llm_chain": LlmChainExecutor(),
         "browser_use": BrowserUseAdapter(),
+        "gemini_media": GeminiMediaExecutor(),
+        "media_chain": MediaChainExecutor(),
         "ffmpeg": FfmpegAssemblyExecutor(),
         "human_checkpoint": HumanCheckpointExecutor(),
         # Publisher construction doesn't touch credentials yet - Vault.get() is

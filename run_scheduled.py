@@ -15,6 +15,15 @@ Invocation (what you'd put in your scheduler):
 `run_scheduled()` is split out from `main()` so tests can call it directly with
 a fake canary and a fake CLI and prove that a failing canary actually blocks the
 run (see tests/test_scheduled_run.py).
+
+Exit-code semantics: this wrapper returns the exit code of the `cli.py start`
+subprocess it launches. Note that `cli.py start` returns 0 even when a run halts
+at a failed step - a failed run is a recorded outcome, not a CLI invocation
+bug. So the return code here distinguishes "canary blocked the run" (2) and
+"CLI crashed / refused to start" (non-zero) from "run was started and recorded
+an outcome" (0). A scheduler that wants to page on "the run itself failed" must
+inspect run state afterwards (e.g. `cli.py status <run_id>`), not rely on this
+process exit code alone.
 """
 from __future__ import annotations
 

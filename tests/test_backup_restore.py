@@ -10,6 +10,7 @@ just "the manifest file looks right".
 """
 from __future__ import annotations
 
+import io
 import json
 import shutil
 import subprocess
@@ -21,7 +22,7 @@ from pathlib import Path
 from orchestrator.models import RunState, StepResult, StepStatus
 from orchestrator.state import StateStore
 from scripts.backup import make_archive
-from scripts.restore import restore_archive
+from scripts.restore import UnsafeArchiveEntry, _safe_relpath, restore_archive
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 CLI = PROJECT_ROOT / "cli.py"
@@ -121,7 +122,65 @@ def test_archive_never_contains_profiles_or_secret_values():
     print("PASS test_archive_never_contains_profiles_or_secret_values")
 
 
+def _write_tar_with(members: dict, path: str) -> None:
+    """Write a crafted single-file tar: name -> bytes."""
+    with tarfile.open(path, "w") as tar:
+        for name, content in members.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(content)
+            tar.addfile(info, io.BytesIO(content))
+
+
+def test_restore_refuses_profiles_even_with_leading_dot_prefix():
+    # A crafted archive can name its members as ./profiles/... to dodge a
+    # check on the raw name - the guard must apply to the NORMALIZED path.
+    with tempfile.TemporaryDirectory() as tmp:
+        for bad in ("./profiles/evil.json", "profiles/evil.json"):
+            archive = str(Path(tmp) / "bad.tar")
+            _write_tar_with({bad: b"stored_cookie=live-session\n"}, archive)
+            ws = Path(tmp) / "ws"
+            try:
+                restore_archive(archive, str(ws))
+                assert False, f"expected UnsafeArchiveEntry for {bad!r}"
+            except UnsafeArchiveEntry:
+                pass
+            assert not (ws / "profiles").exists()
+    print("PASS test_restore_refuses_profiles_even_with_leading_dot_prefix")
+
+
+def test_restore_refuses_path_traversal():
+    with tempfile.TemporaryDirectory() as tmp:
+        for bad in ("../escape.txt", "./../../x", "/etc/passwd"):
+            archive = str(Path(tmp) / "bad.tar")
+            _write_tar_with({bad: b"boom"}, archive)
+            ws = Path(tmp) / "ws"
+            try:
+                restore_archive(archive, str(ws))
+                assert False, f"expected UnsafeArchiveEntry for {bad!r}"
+            except UnsafeArchiveEntry:
+                pass
+            assert len(list(ws.rglob("escape.txt"))) == 0
+    print("PASS test_restore_refuses_path_traversal")
+
+
+def test_safe_relpath_preserves_dotfiles_and_strips_one_prefix():
+    assert _safe_relpath("manifests/a.yaml") == "manifests/a.yaml"
+    assert _safe_relpath("./manifests/a.yaml") == "manifests/a.yaml"
+    assert _safe_relpath(".env") == ".env"
+    assert _safe_relpath("./.env") == ".env"
+    for bad in ("../x", "./../../x", "/abs"):
+        try:
+            _safe_relpath(bad)
+            assert False, f"expected UnsafeArchiveEntry for {bad!r}"
+        except UnsafeArchiveEntry:
+            pass
+    print("PASS test_safe_relpath_preserves_dotfiles_and_strips_one_prefix")
+
+
 if __name__ == "__main__":
     test_backup_wipe_restore_preserves_run_status()
     test_archive_never_contains_profiles_or_secret_values()
+    test_restore_refuses_profiles_even_with_leading_dot_prefix()
+    test_restore_refuses_path_traversal()
+    test_safe_relpath_preserves_dotfiles_and_strips_one_prefix()
     print("\nall backup/restore tests passed")

@@ -24,6 +24,8 @@ jobs:
           - test_youtube_publisher
           - test_publish_step
           - test_browser_use_adapter
+          - test_gemini_media
+          - test_media_chain
           - test_webhook_server
           - test_log_redaction
           - test_scheduled_run
@@ -42,9 +44,8 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
-          # test_youtube_publisher exercises real OAuth credential construction,
-          # so the google client package is required for the suite, not optional.
-          pip install google-api-python-client google-auth-oauthlib
+          # requirements.txt pins google-api-python-client/google-auth-oauthlib
+          # (test_youtube_publisher exercises real OAuth credential construction).
 
       - name: Run ${{ matrix.module }}
         # Mirrors the "whole suite" command from AGENTS.md: each module runs

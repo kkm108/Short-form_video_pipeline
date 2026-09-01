@@ -49,11 +49,13 @@ real `ffmpeg` renders) - not just a class that looks right on paper.
 | `review_gate` | Tested (notifies, always parks, survives a dead webhook) |
 | Review webhook (`webhook_server.py`) | Tested end-to-end (a fake Slack button payload actually moves a parked run to approved/rejected) |
 | Scheduled runner with canary gate (`run_scheduled.py`) | Tested (a failing canary really blocks the run; a passing one proceeds to start) |
-| Backup & restore (`scripts/backup.py`, `scripts/restore.py`) | Tested end-to-end (backup -> wipe -> restore -> `cli.py status` still works); no `profiles/` content or raw secret ever lands in an archive |
+| Backup & restore (`scripts/backup.py`, `scripts/restore.py`) | Tested end-to-end (backup -> wipe -> restore -> `cli.py status` still works); no `profiles/` content or raw secret ever lands in an archive, and restore **refuses** crafted `profiles/`, path-traversal, and link entries |
 | `publish_instagram`, `publish_tiktok` | Tested end-to-end against mock APIs; **need your own Meta/TikTok app + tokens to run live** |
 | `publish_youtube` | Tested end-to-end including real OAuth credential construction; **needs `pip install google-api-python-client google-auth-oauthlib` + your own OAuth app to run live** |
 | `credentials.vault` | Tested (env-var fallback path - the one that runs in headless/CI contexts) |
 | `media_generation` (browser-use) | Config validation tested; **the actual generation task needs `pip install browser-use`, `playwright install chromium`, and a session file from logging into your chosen tool once** |
+| `media_generation` (Gemini, `gemini_media`) | Tested end-to-end against a local mock API (image + TTS request bodies and base64 response parsing write real files); **the live call needs `GEMINI_API_KEY`, no browser** |
+| `media_generation` (multi-vendor chain, `media_chain`) | Tested end-to-end against local mocks for both vendors: per-artifact fallback (gemini down for images but fine for voiceover still yields a bundle), missing-credential providers skipped, no-provider-succeeds -> non-retryable error. Live: needs `GEMINI_API_KEY` (primary, `providers/020-gemini-media.json`) and optionally `OPENAI_API_KEY` (`providers/030-openai-media.json`) |
 | Dry-run stubs (`executors/stubs.py`) | Exercised via `manifests/dry_run.yaml` end-to-end through the real CLI, not just in isolation |
 | `canary` | Not tested - has no target site's selectors filled in yet (see below) |
 
@@ -234,9 +236,11 @@ The intentional-upgrade process when you decide a bump is warranted:
 4. Run the full suite, then `ruff check .` and `mypy .`.
 5. Only after all of that is green is the bump "tested" and worth recording.
 
-Optional deps that aren't installed or tested here (`keyring`, `browser-use`)
-are left unpinned with an explicit `==?` placeholder - there is deliberately no
-version to record until you install and test one.
+`browser-use` is installed and pinned at `browser-use==0.13.8` (it pulls the
+google client pins down to 2.188.0 / 1.2.4 - see the note in this section
+above); its browser binary comes from a separate `python -m playwright install
+chromium`. `keyring` remains unpinned with an explicit `==?` placeholder - there
+is deliberately no version to record until you install and test one.
 
 ## Backup & restore
 
@@ -263,8 +267,11 @@ contains everything needed to resume a run, and *only* that:
 python scripts/backup.py --workspace . --out backup_2026-01-01.tar.gz
 ```
 
-`scripts/restore.py` unpacks it onto a fresh checkout. It refuses to extract
-anything under `profiles/` or any path-traversal / link entry:
+`scripts/restore.py` unpacks it onto a fresh checkout. It normalizes each
+archive member name and then refuses to extract anything under `profiles/`,
+anything that would escape the workspace (path traversal / absolute paths), or
+any link member - a crafted `./profiles/...` name is normalized and caught like
+any other credential path:
 
 ```
 python scripts/restore.py --archive backup_2026-01-01.tar.gz --workspace .
@@ -280,7 +287,10 @@ python scripts/restore.py --archive backup_2026-01-01.tar.gz --workspace .
 workspace, wipes the working directory, restores, and asserts
 `cli.py status <run>` still reports the run - and separately asserts no
 `profiles/*.json` content or raw secret value ever appears inside a produced
-archive (checking each decompressed member, not just the gzip bytes).
+archive (checking each decompressed member, not just the gzip bytes). It also
+feeds `restore.py` crafted archives (`./profiles/...`, `../`, absolute paths)
+and asserts they're refused, and that a legitimate dotfile like `.env` survives
+a restore with its name intact.
 
 ## Project structure
 
@@ -296,6 +306,9 @@ pipeline/
     llm.py                # script: provider-agnostic OpenAI-compatible call
     llm_chain.py            # script: multi-provider fallback chain, see providers/
     browser_use_adapter.py # media_generation: browser-use wrapper
+    gemini_media.py          # media_generation: Gemini API (images+voiceover), no browser
+    media_providers.py       # per-vendor images+voiceover handlers (gemini/openai), shared
+    media_chain.py           # media_generation: multi-vendor per-artifact fallback chain, see providers/
     ffmpeg_assembly.py       # assembly: deterministic render, no AI calls
     human_checkpoint.py       # review_gate: notifies, always parks
     publish_step.py            # wraps one platform Publisher as an Executor
@@ -406,6 +419,64 @@ bounds were the mechanism by which a silent upgrade could reintroduce the
 signature-drift bugs this section keeps documenting; pinning removes that
 specific silent path. The intentional-upgrade process is spelled out in the
 README 'Dependency pinning' section. The optional deps that aren't installed or
-tested (`keyring`, `browser-use`) stay unpinned on purpose - there's no tested
-version to record for a library this repo doesn't currently exercise.
-"# Short-form_video_pipeline" 
+tested (`keyring`) stay unpinned on purpose - there's no tested version to
+record for a library this repo doesn't currently exercise.
+
+Installing `browser-use` 0.13.8 as part of preparing a real run surfaced a
+third, silent correctness issue in the browser path that had been invisible
+for the same reason as the first two: the code that wraps it had never been
+checked against the real library it wraps. `canary/check.py` used playwright's
+`page.locator(...).count()` API - that page object in browser-use 0.13.8 is its
+own `Page` (from `browser_use/actor/page.py`), which has no `locator()`; the
+canary would have crashed the first time it actually ran against a real login.
+It now uses `page.get_elements_by_css_selector(selector)` (a real method on
+that class). `browser_use_adapter.py`'s `Agent(...)` likewise needed an
+explicit type annotation once mypy could resolve the real `Agent[Context,
+AgentStructuredOutput]` class instead of the `# type: ignore[import-not-found]`
+placeholder. Fixing these was free while the suite, lint, and mypy are all
+green - but only because installing the library made the drift visible.
+
+The install also forced a dependency backtrack: browser-use 0.13.8's tree pins
+`google-auth-oauthlib` down to 1.2.4 and `google-api-python-client` to 2.188.0,
+so the earlier pins (1.3.0 / 2.192.0) would not survive a fresh
+`pip install -r requirements.txt`. `requirements.txt` now records the versions
+the resolver actually lands on and the suite is green under (2.188.0 / 1.2.4 /
+requests 2.33.0), with browser-use pinned for real instead of left as a comment.
+
+The media step got a second, browser-free path: `executors/gemini_media.py`
+generates the images and the voiceover by calling the Gemini API directly over
+HTTP with the same key the script step already uses (`api_key_ref` ->
+`GEMINI_API_KEY`), so a Google/Gemini setup no longer needs browser-use or a
+session profile at all. Its request/response shapes were verified against the
+live ai.google.dev docs before writing it (per AGENTS.md), not remembered: the
+image endpoint is `models/gemini-3.1-flash-image:generateContent` with
+`responseModalities: ["IMAGE"]` and base64 `inlineData` back, and the voiceover
+is `models/gemini-3.1-flash-tts-preview:generateContent` with
+`responseModalities: ["AUDIO"]` + `speechConfig.voiceConfig
+.prebuiltVoiceConfig.voiceName` returning a WAV. Notably, Imagen 4 (`:predict`)
+is deliberately avoided - it shut down on Aug 17 2026 and requires billing,
+whereas the flash-image path works on the free tier (~500 images/day). The
+`gemini_real.yaml` manifest wires script -> gemini media -> assembly -> a
+parked review gate, no publishing. The mock-server test (`tests/
+test_gemini_media.py`) caught one bug of its own: it initially returned a path
+from inside a `with TemporaryDirectory()`, which deletes the directory on
+return - an easy trap worth naming in the same spirit as the rest of this
+section.
+
+`gemini_media` grew into a full multi-vendor chain for the media step:
+`executors/media_providers.py` holds the per-vendor image/voiceover handlers
+(gemini + openai), and `executors/media_chain.py` tries each media-capable
+provider config in `providers/*.json` in priority order, per artifact - so a
+Gemini outage or rate-limit can fall images or narration back to OpenAI (or
+vice versa) without halting the run, the same spirit as `llm_chain` for the
+script. The provider configs (`providers/020-gemini-media.json`,
+`030-openai-media.json`) declare a `vendor` so script providers and media
+providers never get mixed up even though they share the directory, and keys
+come only from `api_key_ref` -> vault -> env var. One real design bug surfaced
+while writing the mock tests: the chain resolved every provider's credential up
+front without catching `CredentialNotFound`, so a provider without its env var
+set killed the whole run instead of being skipped like `llm_chain` skips it.
+That's fixed - unresolved-credential providers are logged and skipped. The
+`manifests/media_chain_real.yaml` wire-up (script -> media_chain -> assembly ->
+parked review gate) validates via `load_manifest()` like every other manifest.
+"# Short-form_video_pipeline"

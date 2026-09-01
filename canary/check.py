@@ -33,7 +33,7 @@ async def _check(session_profile: str, target_url: str) -> bool:
 
     all_found = True
     for selector, description in EXPECTED_ELEMENTS:
-        found = await page.locator(selector).count() > 0
+        found = len(await page.get_elements_by_css_selector(selector)) > 0
         if not found:
             logger.error("canary: missing expected element %r (%s)", selector, description)
             all_found = False

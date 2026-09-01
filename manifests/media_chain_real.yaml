@@ -1,0 +1,43 @@
+# Real run to the review gate with a MULTI-VENDOR media fallback chain. The
+# script comes from llm_chain (providers/*.json) and the media (images +
+# voiceover) from media_chain (executors/media_chain.py), which tries every
+# media-capable provider in providers/*.json in priority order, per artifact.
+# So if Gemini is down or rate-limited, images/narration fall back to OpenAI
+# (and vice versa) instead of halting the run.
+#
+#   export GEMINI_API_KEY=...        # primary media provider + script
+#   export OPENAI_API_KEY=...        # optional fallback media provider
+#   python cli.py start manifests/media_chain_real.yaml "some topic"
+#   python cli.py status  <run_id>   # parks at review_gate -> inspect assembled.mp4
+#   python cli.py approve <run_id> review_gate   # only path past the gate
+#
+# No publishes on purpose: the run parks at review_gate for a human decision.
+# Media provider configs live in providers/020-gemini-media.json and
+# providers/030-openai-media.json - reprioritize by renaming the numeric prefix
+# or disable with "enabled": false. Keys only via api_key_ref -> vault -> env
+# var, never in a committed file.
+
+run:
+  platforms: [youtube]
+
+steps:
+  - name: script
+    executor: llm_chain
+    timeout_s: 120
+    retry: {max_attempts: 2, backoff: fixed, base_delay_s: 3}
+    provider_dir: ./providers
+
+  - name: media_generation
+    executor: media_chain
+    timeout_s: 1800
+    retry: {max_attempts: 2, backoff: exponential, base_delay_s: 5, retry_on: [429, 500, 502, 503]}
+    provider_dir: ./providers
+
+  - name: assembly
+    executor: ffmpeg
+    retry: {max_attempts: 1}
+
+  - name: review_gate
+    executor: human_checkpoint
+    timeout_s: 21600
+    on_timeout: escalate

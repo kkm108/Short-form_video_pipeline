@@ -1,0 +1,45 @@
+# Real end-to-end run to the review gate, using Google/Gemini for BOTH the
+# script and the media (images + voiceover) - no browser, no browser-use, no
+# session profile. Publishes are deliberately NOT in this manifest: the run
+# parks at review_gate so you approve the rendered video before anything is
+# published. To publish later, add the publish_* steps (see chain_example.yaml).
+#
+#   export GEMINI_API_KEY=...        (or: keyring set faceless-pipeline gemini_api_key)
+#   python cli.py start manifests/gemini_real.yaml "some topic"
+#   python cli.py status  <run_id>   # parks at review_gate -> inspect assembled.mp4
+#   python cli.py approve <run_id> review_gate   # only path past the gate
+#
+# The script step (llm_chain) and the media step (gemini_media) both read the
+# key via api_key_ref -> vault -> env var, never from a committed file.
+
+run:
+  platforms: [youtube]
+
+steps:
+  - name: script
+    executor: llm_chain
+    timeout_s: 120
+    retry: {max_attempts: 2, backoff: fixed, base_delay_s: 3}
+    provider_dir: ./providers
+
+  - name: media_generation
+    executor: gemini_media
+    timeout_s: 900
+    retry: {max_attempts: 2, backoff: exponential, base_delay_s: 5, retry_on: [429, 500, 502, 503]}
+    api_key_ref: gemini_api_key
+    n_images: 6
+    image_model: gemini-3.1-flash-image
+    tts_model: gemini-3.1-flash-tts-preview
+    voice: Kore
+    aspect_ratio: "9:16"
+    image_size: "1K"
+    image_prompt_template: "Vertical 9:16 keyframe for a short video. Frame {i} of {script}. Match the narration, cinematic, no text overlays."
+
+  - name: assembly
+    executor: ffmpeg
+    retry: {max_attempts: 1}
+
+  - name: review_gate
+    executor: human_checkpoint
+    timeout_s: 21600
+    on_timeout: escalate

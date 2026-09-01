@@ -1,0 +1,15 @@
+{
+    "_note": "OpenAI fallback for the media chain. Set OPENAI_API_KEY (or vault key openai_api_key) to enable; without a key the chain just skips this provider. Image quality and cost differ by vendor - deliberate trade for resilience.",
+    "vendor": "openai",
+    "enabled": true,
+    "api_key_ref": "openai_api_key",
+    "images": true,
+    "tts": true,
+    "image_model": "gpt-image-2",
+    "tts_model": "gpt-4o-mini-tts",
+    "voice": "coral",
+    "image_size": "1024x1536",
+    "quality": "medium",
+    "n_images": 6,
+    "image_prompt_template": "Vertical 9:16 keyframe for a short video, frame {i}: {script}. Match the narration, cinematic, no text overlays."
+}

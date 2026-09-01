@@ -1,0 +1,23 @@
+# Minimal REAL script run - the first step of the pipeline only.
+# Generates an actual LLM script via the multi-provider chain (providers/*.json)
+# and STOPS - no media generation, no review gate, no publishing. Use this to
+# verify your LLM credential + provider config before wiring up the media step.
+#
+#   set GEMINI_API_KEY=...      (or: keyring set faceless-pipeline gemini_api_key)
+#   python cli.py start manifests/script_only.yaml "some topic"
+#   python cli.py status <run_id>
+#
+# The script step uses executors/llm_chain.py, which tries each enabled
+# provider in providers/ in filename-priority order. providers/000-gemini.json
+# is enabled and resolves its key from the vault (env GEMINI_API_KEY / keychain
+# entry gemini_api_key) - the literal key never lives in any committed file.
+
+run:
+  platforms: [youtube]
+
+steps:
+  - name: script
+    executor: llm_chain
+    timeout_s: 120
+    retry: {max_attempts: 2, backoff: fixed, base_delay_s: 3}
+    provider_dir: ./providers

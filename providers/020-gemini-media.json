@@ -1,0 +1,14 @@
+{
+    "vendor": "gemini",
+    "enabled": true,
+    "api_key_ref": "gemini_api_key",
+    "images": true,
+    "tts": true,
+    "image_model": "gemini-3.1-flash-image",
+    "tts_model": "gemini-3.1-flash-tts-preview",
+    "voice": "Kore",
+    "n_images": 6,
+    "aspect_ratio": "9:16",
+    "image_size": "1K",
+    "image_prompt_template": "Vertical 9:16 keyframe for a short video, frame {i}: {script}. Match the narration, cinematic, no text overlays."
+}

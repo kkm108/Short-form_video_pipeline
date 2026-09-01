@@ -7,18 +7,24 @@
 # library's real signature per AGENTS.md (an unverified signature assumption is
 # the recurring failure mode here).
 pyyaml==6.0.3
-requests==2.32.5
+requests==2.33.0
 
-# Optional - only needed for the step(s) you actually wire up. These two are
-# installed here and covered by tests (a real multi-chunk upload is exercised
-# against a mock API in tests/test_youtube_publisher.py):
-google-api-python-client==2.192.0        # executors/publishers/youtube.py
-google-auth-oauthlib==1.3.0              # YouTube's OAuth flow (run once to mint a refresh token)
+# Google client - pinned (not optional): required by the test suite, so it
+# ships as an active pin. Only the youtube schema step / OAuth actually uses it,
+# but if you drop these the suite no longer installs cleanly. Note these are a
+# version below the previous pins on purpose: browser-use 0.13.8 pulls
+# google-api-python-client/google-auth-oauthlib into its dependency tree and the
+# resolver back-tracks to 2.188.0/1.2.4, so pinning higher here does not survive
+# a fresh `pip install -r requirements.txt`. Test suite is green on these.
+google-api-python-client==2.188.0        # executors/publishers/youtube.py
+google-auth-oauthlib==1.2.4              # YouTube's OAuth flow (run once to mint a refresh token)
 
-# Optional and intentionally UNPINNED: not installed or tested in this repo
-# right now, so there is no tested version to record yet. Uncomment these, pin
-# them to the exact version `pip freeze` reports once you install them, and run
-# the relevant module's tests green against that pin before trusting it.
+# browser-use - now installed and pinned. The actual browser binary comes from
+# a separate step: `python -m playwright install chromium`.
+browser-use==0.13.8                       # executors/browser_use_adapter.py, canary/check.py
+
+# Genuinely optional and intentionally UNPINNED: not installed or tested in this
+# repo right now, so there is no tested version to record yet. Uncomment these,
+# pin them to the exact version `pip freeze` reports once you install them, and
+# run the relevant module's tests green against that pin before trusting it.
 # keyring==?                                     # credentials.vault OS-keychain path (falls back to env vars without it)
-# browser-use==?                                 # executors/browser_use_adapter.py, canary/check.py
-#   playwright install chromium                 # browser-use's actual browser binary

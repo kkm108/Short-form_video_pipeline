@@ -84,7 +84,7 @@ class BrowserUseAdapter:
         from browser_use import Agent, Browser  # type: ignore[import-not-found]  # optional dep, imported lazily (see module docstring)
 
         browser = Browser(storage_state=session_path, headless=cfg.get("headless", True))
-        agent = Agent(task=task, browser=browser, llm=llm)
+        agent: Agent[Any, Any] = Agent(task=task, browser=browser, llm=llm)
         history = await agent.run(max_steps=cfg.get("max_steps", 40))
         return interpret_history(history, cfg)
 

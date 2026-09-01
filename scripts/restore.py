@@ -30,16 +30,24 @@ class UnsafeArchiveEntry(Exception):
 
 
 def _safe_relpath(name: str) -> str:
-    """Normalize an archive member name to a safe relative POSIX path, or raise."""
-    # tarfile already rejects absolute/special members via filter where used, but
-    # defend here too against a hand-crafted archive.
+    """Normalize an archive member name to a safe relative POSIX path, or raise.
+
+    Strips exactly one leading ``./`` prefix (a common tar convention) without
+    touching real leading dots (a legit ``.env`` stays ``.env``), and rejects
+    traversal (``..``) and absolute paths. A blanket ``lstrip(\"./\")`` would
+    both strip the dots off a real dotfile and silent ``..`` before the check -
+    both wrong.
+    """
     import posixpath
 
-    normalized = posixpath.normpath(name.replace("\\", "/")).lstrip("./")
-    if normalized.startswith("../") or normalized.startswith(".."):
-        raise UnsafeArchiveEntry(f"path escapes workspace: {name!r}")
+    raw = name.replace("\\", "/")
+    if raw.startswith("./"):
+        raw = raw[2:]
+    normalized = posixpath.normpath(raw)
     if normalized in ("", ".", os.curdir, os.pardir):
         raise UnsafeArchiveEntry(f"refuses to extract bare path {name!r}")
+    if normalized.startswith("../") or normalized == ".." or normalized.startswith("/"):
+        raise UnsafeArchiveEntry(f"path escapes workspace: {name!r}")
     return normalized
 
 
@@ -53,13 +61,15 @@ def restore_archive(archive: str, workspace: str) -> list[str]:
 
     restored: list[str] = []
     with tarfile.open(archive, "r:*") as tar:
-        # protected=True strips ./ prefixes and blocks absolute / traversal names
         for member in tar:
-            if member.name.startswith(FORBIDDEN_PREFIXES):
-                raise UnsafeArchiveEntry(
-                    f"archive contains forbidden credential path {member.name!r}; refusing to restore"
-                )
+            # Normalize FIRST, then apply every safety rule to the normalized
+            # path. Checking a prefix against the raw member.name is how a
+            # crafted `./profiles/...` used to slip past the guard.
             rel = _safe_relpath(member.name)
+            if rel.startswith(FORBIDDEN_PREFIXES):
+                raise UnsafeArchiveEntry(
+                    f"archive contains forbidden credential path {rel!r}; refusing to restore"
+                )
             if rel == MANIFEST_NAME:
                 continue
             if member.issym() or member.islnk():
