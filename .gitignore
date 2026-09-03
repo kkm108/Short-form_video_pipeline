@@ -7,6 +7,19 @@ downloads/
 # a live, logged-in session; treat it the same as an API key, never commit it.
 profiles/*.json
 
+# Secrets - independent of scripts/backup.py's exclusion (that only protects
+# backups, not commits). The vault uses the OS keychain + env vars, so there
+# are normally no secret files at all; these patterns are a hard stop-gap so a
+# stray .env / key file can never be committed, even by mistake.
+.env
+.env.*
+*.env
+.vault/
+*.key
+*.pem
+*.pfx
+*.p12
+
 __pycache__/
 *.pyc
 .pytest_cache/

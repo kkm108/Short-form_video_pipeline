@@ -30,6 +30,11 @@ jobs:
           - test_log_redaction
           - test_scheduled_run
           - test_backup_restore
+          - test_alerter
+          - test_refresh_tokens
+          - test_quota_tracker
+          - test_disk_guard
+          - test_run_lock
     steps:
       - uses: actions/checkout@v4
 

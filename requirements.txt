@@ -23,8 +23,9 @@ google-auth-oauthlib==1.2.4              # YouTube's OAuth flow (run once to min
 # a separate step: `python -m playwright install chromium`.
 browser-use==0.13.8                       # executors/browser_use_adapter.py, canary/check.py
 
-# Genuinely optional and intentionally UNPINNED: not installed or tested in this
-# repo right now, so there is no tested version to record yet. Uncomment these,
-# pin them to the exact version `pip freeze` reports once you install them, and
-# run the relevant module's tests green against that pin before trusting it.
-# keyring==?                                     # credentials.vault OS-keychain path (falls back to env vars without it)
+# OS-keychain path for credentials.vault - installed and tested against the
+# Windows Credential Locker (WinVaultKeyring). Headless/CI machines without a
+# usable backend still fall back to env vars, which the test suite exercises.
+# Bump rule is the same as the other pins: re-run tests/test_vault green and
+# re-verify the real keyring API surface before recording a new version.
+keyring==25.7.0

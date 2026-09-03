@@ -176,6 +176,108 @@ def test_publisher_wraps_build_client_failure_cleanly():
         print("PASS test_publisher_wraps_build_client_failure_cleanly")
 
 
+class _QuotaError(Exception):
+    """Simulates googleapiclient HttpError carrying a quotaExceeded body."""
+
+    def __init__(self, reason: str):
+        super().__init__("simulated quota error")
+        import json as _j
+        self.resp = type("Resp", (), {"status": 403})()
+        body = {"error": {"errors": [{"reason": reason}]}}
+        self.content = _j.dumps(body)
+
+
+def test_publisher_checks_budget_and_blocks_when_exhausted_before_upload():
+    import tempfile
+    from pathlib import Path
+    from orchestrator.quota_tracker import QuotaTracker
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tracker = QuotaTracker(Path(tmp) / "ledger.json")
+        tracker.record("youtube", cost=96)  # full budget
+        publisher = YouTubePublisher(
+            credentials_provider=lambda platform: "placeholder",
+            quota_tracker=tracker,
+            quota_cost=1,
+            quota_budget=96,
+        )
+        metadata = PublishMetadata(title="t", description="d", hashtags=[])
+        with patch("googleapiclient.http.MediaFileUpload") as mfu:
+            mfu.return_value = object()
+            try:
+                publisher.publish("/tmp/upload.mp4", metadata)
+                assert False, "expected ExecutorError when budget is exhausted"
+            except ExecutorError as exc:
+                assert exc.retryable is False, "no budget means retrying cannot help"
+                assert "quota" in str(exc)
+    print("PASS test_publisher_checks_budget_and_blocks_when_exhausted_before_upload")
+
+
+def test_publisher_records_cost_on_success():
+    import tempfile
+    from pathlib import Path
+    from orchestrator.quota_tracker import QuotaTracker
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tracker = QuotaTracker(Path(tmp) / "ledger.json")
+        final_response = {"id": "video_quota"}
+
+        class _FakeRequest:
+            def next_chunk(self):
+                return None, final_response
+
+        request = _FakeRequest()
+        youtube = _fake_youtube_client(request)
+        publisher = YouTubePublisher(
+            credentials_provider=lambda platform: "placeholder",
+            build_client=lambda creds: youtube,
+            quota_tracker=tracker,
+            quota_cost=6,
+            quota_budget=96,
+        )
+        metadata = PublishMetadata(title="t", description="d", hashtags=[])
+        with patch("googleapiclient.http.MediaFileUpload") as mfu:
+            mfu.return_value = object()
+            result = publisher.publish("/tmp/upload.mp4", metadata)
+        assert result.remote_id == "video_quota"
+        assert tracker.used_today("youtube") == 6, "a successful upload must record its cost"
+    print("PASS test_publisher_records_cost_on_success")
+
+
+def test_publisher_marks_exhausted_and_non_retryable_on_quota_errors():
+    import tempfile
+    from pathlib import Path
+    from orchestrator.quota_tracker import QuotaTracker
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tracker = QuotaTracker(Path(tmp) / "ledger.json")
+
+        class _FakeRequest:
+            def next_chunk(self):
+                raise _QuotaError("quotaExceeded")
+
+        request = _FakeRequest()
+        youtube = _fake_youtube_client(request)
+        publisher = YouTubePublisher(
+            credentials_provider=lambda platform: "placeholder",
+            build_client=lambda creds: youtube,
+            quota_tracker=tracker,
+            quota_cost=6,
+            quota_budget=96,
+        )
+        metadata = PublishMetadata(title="t", description="d", hashtags=[])
+        with patch("googleapiclient.http.MediaFileUpload") as mfu:
+            mfu.return_value = object()
+            try:
+                publisher.publish("/tmp/upload.mp4", metadata)
+                assert False, "expected ExecutorError"
+            except ExecutorError as exc:
+                assert exc.retryable is False, "quotaExceeded must not be blindly retried"
+                assert exc.status_code == 403
+        assert tracker.is_exhausted("youtube") is True, "quotaExceeded must mark the day exhausted"
+    print("PASS test_publisher_marks_exhausted_and_non_retryable_on_quota_errors")
+
+
 if __name__ == "__main__":
     test_build_video_body_truncates_title_to_100_chars()
     test_build_video_body_shape_matches_data_api_v3()
@@ -185,4 +287,7 @@ if __name__ == "__main__":
     test_upload_loop_success_for_multichunk_upload()
     test_upload_loop_http_error_mid_upload_is_retryable_for_5xx()
     test_upload_loop_http_error_4xx_is_not_retryable()
+    test_publisher_checks_budget_and_blocks_when_exhausted_before_upload()
+    test_publisher_records_cost_on_success()
+    test_publisher_marks_exhausted_and_non_retryable_on_quota_errors()
     print("\nall youtube publisher tests passed")

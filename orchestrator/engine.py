@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Optional
 
 from executors.base import AwaitingApproval, ExecutorError, ExecutorOutput, StepContext, StepExecutor
+from orchestrator.disk_guard import ensure_disk
 from orchestrator.manifest import Manifest, StepSpec, load_manifest
 from orchestrator.models import RunState, StepResult, StepStatus
 from orchestrator.state import StateStore
@@ -31,6 +32,11 @@ class Pipeline:
 
     def start(self, manifest_path: str, seed_topic: str) -> str:
         manifest = load_manifest(manifest_path)
+        # Runtime disk guardrail: refuse a fresh run when there isn't room to
+        # produce output (media + ffmpeg write large files). Raises DiskLowError
+        # so an unattended scheduler fails loudly instead of quietly filling the
+        # drive; run_scheduled.py pages on the non-zero exit.
+        ensure_disk(self.workdir, name="run")
         run = RunState.new(seed_topic=seed_topic, platforms=manifest.platforms, manifest_path=manifest_path)
         self.state.create_run(run)
         logger.info("run %s created for topic %r", run.run_id, seed_topic)
@@ -44,8 +50,8 @@ class Pipeline:
         if run is None:
             raise ValueError(f"unknown run_id {run_id!r}")
         manifest = load_manifest(run.manifest_path)
+        ensure_disk(self.workdir, name="run")
         self._advance(manifest, run.run_id, run.seed_topic)
-
     # ---- core loop -----------------------------------------------------------
 
     def _advance(self, manifest: Manifest, run_id: str, seed_topic: str) -> None:

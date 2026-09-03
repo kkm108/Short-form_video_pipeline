@@ -25,12 +25,20 @@ from executors.publishers.base import PublishMetadata, PublishResult, Publisher
 class YouTubePublisher(Publisher):
     platform = "youtube"
 
-    def __init__(self, credentials_provider, build_client=None):
+    def __init__(self, credentials_provider, build_client=None, quota_tracker=None, quota_cost: int = 1, quota_budget: int = 96):
         self._credentials_provider = credentials_provider
         # Injectable so tests can exercise the credential-handling logic below
         # without a real googleapiclient client or real OAuth creds - see
         # tests/test_youtube_publisher.py.
         self._build_client = build_client or _default_build_client
+        # Optional quota ledger (orchestrator.quota_tracker.QuotaTracker). When
+        # set, an upload checks the day's remaining budget first, records its
+        # cost on success, and marks the day exhausted on a quotaExceeded/
+        # dailyLimitExceeded error so the next scheduled trigger backs off
+        # instead of burning the whole budget on impossible retries.
+        self._quota = quota_tracker
+        self._quota_cost = quota_cost
+        self._quota_budget = quota_budget
 
     def publish(self, video_path: str, metadata: PublishMetadata) -> PublishResult:
         try:
@@ -41,6 +49,15 @@ class YouTubePublisher(Publisher):
                 "pip install google-api-python-client google-auth-oauthlib",
                 retryable=False,
             ) from exc
+
+        if self._quota is not None:
+            remaining = self._quota.remaining("youtube", self._quota_budget)
+            if remaining <= 0:
+                raise ExecutorError(
+                    f"YouTube daily upload quota exhausted (budget {self._quota_budget}, 0 remaining) - "
+                    "skip today and try tomorrow",
+                    retryable=False,
+                )
 
         try:
             creds = self._credentials_provider("youtube")
@@ -73,15 +90,45 @@ class YouTubePublisher(Publisher):
             # are worth a retry; a 4xx from the identical request never will be.
             status_code = getattr(getattr(exc, "resp", None), "status", None)
             retryable = status_code is None or status_code >= 500
+            error_reason = _error_reason(exc)
+            if error_reason in ("quotaExceeded", "dailyLimitExceeded", "userRateLimitExceeded") and self._quota is not None:
+                # The day's quota is spent - mark it so later triggers back off,
+                # and report non-retryable (retrying the identical upload won't
+                # conjure quota).
+                self._quota.mark_exhausted("youtube")
+                retryable = False
             raise ExecutorError(f"YouTube upload failed: {exc}", status_code=status_code, retryable=retryable) from exc
 
         video_id = response["id"]
+        if self._quota is not None:
+            self._quota.record("youtube", self._quota_cost)
         return PublishResult(platform="youtube", remote_id=video_id, url=f"https://youtube.com/shorts/{video_id}")
 
 
 def _default_build_client(credentials):
     from googleapiclient.discovery import build  # type: ignore[import-untyped]  # google-api-python-client ships no stubs
     return build("youtube", "v3", credentials=credentials)
+
+
+def _error_reason(exc: Exception) -> str:
+    """Belt-and-braces extraction of a Google API error reason from whatever
+    shape the SDK surfaces: a plain string containing the reason, or a JSON
+    error body. Returns '' when it can't tell - callers treat unknown as
+    'not a quota reason'."""
+    import json as _json
+
+    body = getattr(exc, "content", None)
+    if body:
+        text = body if isinstance(body, str) else body.decode("utf-8", "replace")
+        try:
+            data = _json.loads(text)
+            reasons = [e.get("reason", "") for e in data.get("error", {}).get("errors", [])]
+            if reasons:
+                return reasons[0]
+        except (ValueError, AttributeError):
+            pass
+        return text
+    return ""
 
 
 def build_video_body(metadata: PublishMetadata) -> dict:

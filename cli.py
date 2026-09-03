@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
+from pathlib import Path
 
 from credentials.vault import credentials_provider
 from executors.base import StepExecutor
@@ -32,6 +34,8 @@ from executors.publishers.youtube import YouTubePublisher
 from executors.stubs import StubMediaGenerationExecutor, StubPublishExecutor, StubScriptExecutor
 from orchestrator.engine import Pipeline, approve, reject
 from orchestrator.models import StepStatus
+from orchestrator.quota_tracker import QuotaTracker, YOUTUBE_DEFAULT_BUDGET
+from orchestrator.run_lock import LockHeld, RunLock
 from orchestrator.state import StateStore
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -39,6 +43,11 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 
 def build_pipeline(db_path: str = "pipeline_state.db", workdir: str = "./runs") -> tuple[Pipeline, StateStore]:
     state = StateStore(db_path)
+    quota_dir = Path(workdir)
+    quota_dir.mkdir(parents=True, exist_ok=True)
+    quota = QuotaTracker(quota_dir / "quota_ledger.json")
+    youtube_budget = int(os.environ.get("QUOTA_YOUTUBE_BUDGET", str(YOUTUBE_DEFAULT_BUDGET)))
+    youtube_quota_cost = int(os.environ.get("QUOTA_YOUTUBE_COST", "1"))
     executors: dict[str, StepExecutor] = {
         "llm": LlmScriptExecutor(),
         "llm_chain": LlmChainExecutor(),
@@ -52,7 +61,14 @@ def build_pipeline(db_path: str = "pipeline_state.db", workdir: str = "./runs") 
         # any platform's tokens. A manifest step for a platform you haven't
         # configured just fails clearly (CredentialNotFound) when it runs,
         # instead of the CLI refusing to start at all.
-        "publish_youtube": SinglePlatformPublishExecutor(YouTubePublisher(credentials_provider)),
+        "publish_youtube": SinglePlatformPublishExecutor(
+            YouTubePublisher(
+                credentials_provider,
+                quota_tracker=quota,
+                quota_cost=youtube_quota_cost,
+                quota_budget=youtube_budget,
+            )
+        ),
         "publish_instagram": SinglePlatformPublishExecutor(InstagramPublisher(credentials_provider)),
         "publish_tiktok": SinglePlatformPublishExecutor(TikTokPublisher(credentials_provider)),
         # Zero-setup stand-ins - see manifests/dry_run.yaml.
@@ -93,6 +109,23 @@ def main() -> None:
     args = parser.parse_args()
     pipeline, state = build_pipeline()
 
+    if args.command in ("start", "resume", "approve"):
+        # Mutual-exclusion so a second scheduled/manual trigger can't run the
+        # pipeline concurrently (they'd share runs/, the state DB, and platform
+        # quota). Advisory lock on runs/run.lock is auto-released by the OS if
+        # this process dies mid-run, so there's no stale-lock problem.
+        lock = RunLock(Path(pipeline.workdir) / "run.lock")
+        try:
+            with lock:
+                _dispatch(pipeline, state, args)
+        except LockHeld:
+            print(f"another pipeline run is already in progress - refusing to start {args.command} for {args.run_id if hasattr(args, 'run_id') else args.seed_topic}", file=sys.stderr)
+            sys.exit(3)
+    else:
+        _dispatch(pipeline, state, args)
+
+
+def _dispatch(pipeline: Pipeline, state: StateStore, args) -> None:
     if args.command == "start":
         run_id = pipeline.start(args.manifest, args.seed_topic)
         _print_run_outcome(state, run_id, verb="started")

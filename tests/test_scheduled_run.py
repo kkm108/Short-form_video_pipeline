@@ -90,7 +90,38 @@ def test_passing_canary_proceeds_to_start_the_run():
     print("PASS test_passing_canary_proceeds_to_start_the_run")
 
 
+def test_failing_canary_sends_alert():
+    """A red canary must both block the run AND dispatch an alert - otherwise
+    the 3am silent-failure gap is only half-closed."""
+    with tempfile.TemporaryDirectory() as tmp:
+        marker = Path(tmp) / "cli-ran.txt"
+        cli_path = _write_fake_cli(Path(tmp) / "fake_cli.py")
+        os.environ["FAKE_CLI_MARKER"] = str(marker)
+        try:
+            with patch("run_scheduled.run_canary", return_value=False):
+                with patch("run_scheduled.send_alert") as send:
+                    code = run_scheduled(
+                        manifest=str(Path(tmp) / "manifest.yaml"),
+                        topic="some topic",
+                        session_profile="/tmp/session.json",
+                        target_url="https://tool.example/generate",
+                        cli_cmd=cli_path,
+                        interpreter=__import__("sys").executable,
+                        alert_webhook="https://alerts.example/hook",
+                    )
+        finally:
+            os.environ.pop("FAKE_CLI_MARKER", None)
+
+        assert code == 2
+        assert send.called, "a failing canary must send an alert"
+        args, _ = send.call_args
+        assert "canary FAILED" in args[0]
+        assert args[1] == "https://alerts.example/hook"
+    print("PASS test_failing_canary_sends_alert")
+
+
 if __name__ == "__main__":
     test_failing_canary_blocks_the_run_and_exits_nonzero()
     test_passing_canary_proceeds_to_start_the_run()
+    test_failing_canary_sends_alert()
     print("\nall scheduled run tests passed")
